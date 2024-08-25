@@ -1,0 +1,53 @@
+#!/bin/sh
+
+PID_FILE=/run/tinyproxy/tinyproxy.pid
+BASIC_AUTH=''
+ALLOW=''
+
+echo 'Auth configuration'
+read -p '    Username: ' USERNAME
+
+[ -z "$USERNAME" ] ||
+    read -p '    Password: ' PASSWORD
+
+[ -z "$PASSWORD" ] ||
+    BASIC_AUTH="BasicAuth $USERNAME $PASSWORD"
+
+echo
+
+if [[ "$(read -p 'Enable IP whitelist? [y/n]: ' YES && echo $YES)" == [yY] ]]; then
+
+    SSH_CLIENT_IP=${SSH_CLIENT%% *}
+
+    [[ ! -z "$SSH_CLIENT_IP" ]] &&
+    [[ "$(read -p "    Add $SSH_CLIENT_IP (this is your IP address)? [y/n]: " YES && echo $YES)" == [yY] ]] &&
+        ALLOW="$ALLOW\nAllow $SSH_CLIENT_IP"
+
+    while true; do
+        read -p '    Enter IP address: ' IP
+        [ -z "$IP" ] && break
+        ALLOW="$ALLOW\nAllow $IP"
+    done
+fi
+
+cat >/etc/tinyproxy/tinyproxy.conf <<EOF
+User nobody
+Group nogroup
+PidFile $(echo $PID_FILE)
+Port 8080
+Listen 0.0.0.0
+Timeout 600
+MaxClients 10
+DisableViaHeader Yes
+$(echo $BASIC_AUTH)
+$(echo $ALLOW)
+EOF
+
+echo
+echo 'Starting server...'
+
+while [ ! -f "$PID_FILE" ]; do
+    sleep 2
+done
+
+echo 'Server started successfully'

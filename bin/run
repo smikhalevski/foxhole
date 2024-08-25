@@ -1,0 +1,7 @@
+#!/bin/sh
+
+while [ ! -f /etc/tinyproxy/tinyproxy.conf ]; do
+    sleep 1
+done
+
+tinyproxy -d -c /etc/tinyproxy/tinyproxy.conf
