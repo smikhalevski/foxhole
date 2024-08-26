@@ -18,6 +18,5 @@ FROM base
 
 COPY ./bin /usr/local/sbin
 COPY --from=builder /usr/local/bin /usr/local/bin
-EXPOSE 8080
 
 CMD run

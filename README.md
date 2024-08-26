@@ -9,10 +9,12 @@ How to set up forward proxy server on Digital Ocean:
 3. Copy this command and run it. It may take several of minutes to complete.
 
 ```shell
-docker exec -it $(docker rm -f forward-proxy >/dev/null 2>&1 && docker run --pull always --name forward-proxy -qdp 65050:8080 ghcr.io/smikhalevski/forward-proxy-docker:master) configure
+ufw allow 65050 && docker rm -f forward-proxy && docker exec -it $(docker run --pull always --name=forward-proxy --network=host -qd ghcr.io/smikhalevski/forward-proxy-docker:master) configure
 ```
 
-4. Follow instructions on the screen: setup username/password credentials and specify IPs that are allowed to use proxy.
+4. Follow instructions on the screen. Setup username and
+   password. [Obtain your IPv4 address](https://whatismyipaddress.com/) and add it to the whitelist. Specify other IPs
+   that are allowed to use the created proxy server.
 
 5. After the server is successfully started, you should configure a proxy in your browser or OS (see below).
 
