@@ -1,39 +1,41 @@
 #!/bin/sh
 
-PID_FILE=/run/tinyproxy/tinyproxy.pid
+PID_FILE=/tmp/tinyproxy.pid
 BASIC_AUTH=''
 ALLOW=''
 
-echo 'Auth configuration'
+echo '1/2 Configure authentication'
 read -p '    Username: ' USERNAME
 
-[ -z "$USERNAME" ] ||
-    read -p '    Password: ' PASSWORD
+[ "$USERNAME" ] && read -p '    Password: ' PASSWORD
 
-[ -z "$PASSWORD" ] ||
-    BASIC_AUTH="BasicAuth $USERNAME $PASSWORD"
+[ "$PASSWORD" ] && BASIC_AUTH="BasicAuth \"$USERNAME\" \"$PASSWORD\""
+
+[ "$BASIC_AUTH" ] || echo '    Authentication disabled'
 
 echo
 
-if [[ "$(read -p 'Enable IP whitelist? [y/n]: ' YES && echo $YES)" == [yY] ]]; then
+if [[ "$(read -p '2/2 Enable IP whitelist? [y/n]: ' YES && echo $YES)" == [yY] ]]; then
 
     SSH_CLIENT_IP=${SSH_CLIENT%% *}
 
-    [[ ! -z "$SSH_CLIENT_IP" ]] &&
+    [ "$SSH_CLIENT_IP" ] &&
     [[ "$(read -p "    Add $SSH_CLIENT_IP (this is your IP address)? [y/n]: " YES && echo $YES)" == [yY] ]] &&
         ALLOW="$ALLOW\nAllow $SSH_CLIENT_IP"
 
     while true; do
-        read -p '    Enter IP address: ' IP
+        read -p '    Enter an IP address: ' IP
         [ -z "$IP" ] && break
         ALLOW="$ALLOW\nAllow $IP"
     done
 fi
 
+mkdir -p /etc/tinyproxy
+
 cat >/etc/tinyproxy/tinyproxy.conf <<EOF
 User nobody
 Group nogroup
-PidFile $(echo $PID_FILE)
+PidFile "$(echo $PID_FILE)"
 Port 8080
 Listen 0.0.0.0
 Timeout 600
@@ -50,4 +52,7 @@ while [ ! -f "$PID_FILE" ]; do
     sleep 2
 done
 
-echo 'Server started successfully'
+PUBLIC_IP_ADDR=$(wget -qO- http://myip.enix.org/REMOTE_ADDR)
+
+echo
+echo -e "Server started successfully: \033[0;32m$PUBLIC_IP_ADDR:65050\033[0m"
