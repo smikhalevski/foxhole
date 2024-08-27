@@ -1,7 +1,13 @@
 #!/bin/sh
 
 while [ ! -f /etc/tinyproxy/tinyproxy.conf ]; do
-    sleep 1
+    sleep 5
 done
 
-tinyproxy -d -c /etc/tinyproxy/tinyproxy.conf
+if [ -L /etc/letsencrypt/live/foxhole ]; then
+    tinyproxy -d -c /etc/tinyproxy/tinyproxy.conf &
+    sleep 5
+    nginx -g 'daemon off;'
+else
+    tinyproxy -d -c /etc/tinyproxy/tinyproxy.conf
+fi
