@@ -1,5 +1,7 @@
 # 🦊&ensp;Foxhole
 
+Foxhole is a Docker container that streamlines the setup of HTTPS forward proxy.
+
 How to set up forward proxy server on Digital Ocean:
 
 1. Create the cheapest [Docker droplet.](https://marketplace.digitalocean.com/apps/docker)

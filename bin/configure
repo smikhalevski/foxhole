@@ -124,7 +124,7 @@ if confirm 'Configure authentication?'; then
 auth_basic "Authentication required";
 auth_basic_user_file "${FOXHOLE_HTPASSWD}";
 
-rewrite_by_lua_file "${FOXHOLE_CONF_DIR}/proxy_auth.lua";
+rewrite_by_lua_file /usr/local/openresty/nginx/conf/proxy_auth.lua;
 EOF
 fi
 
@@ -145,11 +145,11 @@ if confirm 'Configure IP whitelist?'; then
         ! [ "$IP" ] && break
         ! [[ $IP =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && echo -e "${COLOR_RED}Invalid IP address$COLOR_OFF" && continue
 
-        echo "allow $IP;" >>"$FOXHOLE_ALLOW_CONF"
+        echo -e "allow $IP;\ndeny all;" >>"$FOXHOLE_ALLOW_CONF"
 
-        # Deny all other IPs
-        grep -vF "deny all;" "$FOXHOLE_ALLOW_CONF" >"$FOXHOLE_ALLOW_CONF.tmp" && mv -f "$FOXHOLE_ALLOW_CONF.tmp" "$FOXHOLE_ALLOW_CONF"
-        echo 'deny all;' >>"$FOXHOLE_ALLOW_CONF"
+        # Sort and discard duplicates
+        cat "$FOXHOLE_ALLOW_CONF" | sort | uniq >"$FOXHOLE_ALLOW_CONF.tmp"
+        mv -f "$FOXHOLE_ALLOW_CONF.tmp" "$FOXHOLE_ALLOW_CONF"
     done
 fi
 
