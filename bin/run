@@ -1,11 +1,10 @@
 #!/bin/sh
 
 FOXHOLE_CONF_DIR=/foxhole
-#FOXHOLE_CONF_DIR=./__TEMP
 FOXHOLE_CONF="$FOXHOLE_CONF_DIR/foxhole.conf"
 
 mkdir -p "$FOXHOLE_CONF_DIR"
 
-! [ -f "$FOXHOLE_CONF" ] && echo "server { listen 8080; return 404; }" > "$FOXHOLE_CONF"
+! [ -f "$FOXHOLE_CONF" ] && echo "server { listen 80 default_server; server_name _; return 404; }" > "$FOXHOLE_CONF"
 
 nginx

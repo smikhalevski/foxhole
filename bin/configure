@@ -2,19 +2,19 @@
 
 set -e
 
+clear
+
 LETSENCRYPT_DIR=/etc/letsencrypt
 LIVE_CERTS_DIR="$LETSENCRYPT_DIR/live"
 
 FOXHOLE_CONF_DIR=/foxhole
-#FOXHOLE_CONF_DIR=./__TEMP
 FOXHOLE_CERT_DIR="$LIVE_CERTS_DIR/foxhole"
 FOXHOLE_HTPASSWD="$FOXHOLE_CONF_DIR/foxhole_htpasswd"
-FOXHOLE_LISTEN_CONF="$FOXHOLE_CONF_DIR/foxhole_listen.conf"
+FOXHOLE_SSL_CONF="$FOXHOLE_CONF_DIR/foxhole_ssl.conf"
 FOXHOLE_BASIC_AUTH_CONF="$FOXHOLE_CONF_DIR/foxhole_basic_auth.conf"
 FOXHOLE_ALLOW_CONF="$FOXHOLE_CONF_DIR/foxhole_allow.conf"
 FOXHOLE_CONF="$FOXHOLE_CONF_DIR/foxhole.conf"
 
-SERVER_PORT=65050
 SERVER_DNS_RESOLVER=8.8.8.8
 SERVER_IP=$(wget -qO- http://myip.enix.org/REMOTE_ADDR)
 
@@ -60,34 +60,31 @@ if confirm 'Configure HTTPS?'; then
 
         CERT_DIR="$LIVE_CERTS_DIR/$DOMAIN_NAME"
 
-        [ -d "$CERT_DIR" ] && \
-        confirm "Delete existing certificates for ${DOMAIN_NAME}?" && \
-        echo 'DELETING CERTS'
-        #rm -rf "$CERT_DIR" "$FOXHOLE_CERT_DIR"
+        [ -d "$CERT_DIR" ] && confirm "Delete existing certificates for ${DOMAIN_NAME}?" && rm -rf "$CERT_DIR"
 
-        echo
+        rm -f "$FOXHOLE_SSL_CONF" "$FOXHOLE_CERT_DIR"
+
         ! [ -d "$CERT_DIR" ] && \
-        echo "server { listen 8080; }" > "$FOXHOLE_CONF" && \
+        echo && \
+        echo -n 'Issuing a certificate... ' && \
+        echo '' >"$FOXHOLE_CONF" && \
         nginx -s reload && \
         certbot certonly \
             --nginx \
             --nginx-server-root /usr/local/openresty/nginx/conf \
-            --dry-run \
             --non-interactive \
             --agree-tos \
             --no-eff-email \
             --no-redirect \
             --email "admin@$DOMAIN_NAME" \
             --cert-name "$DOMAIN_NAME" \
-            --domain "$DOMAIN_NAME"
-#            --quiet
+            --domain "$DOMAIN_NAME" \
+            --quiet && \
+        echo -e "${COLOR_GREEN}OK$COLOR_OFF"
 
-        # Link certificate
-        ln -snf "$CERT_DIR" "$FOXHOLE_CERT_DIR"
-
-        cat >"$FOXHOLE_LISTEN_CONF" <<EOF
-listen ${SERVER_PORT} ssl;
-
+        [ -d "$CERT_DIR" ] && \
+        ln -snf "$CERT_DIR" "$FOXHOLE_CERT_DIR" && \
+        cat >"$FOXHOLE_SSL_CONF" <<EOF
 ssl_certificate ${FOXHOLE_CERT_DIR}/fullchain.pem;
 ssl_certificate_key ${FOXHOLE_CERT_DIR}/privkey.pem;
 ssl_session_timeout 5m;
@@ -97,6 +94,7 @@ ssl_ciphers 'EECDH+AESGCM:EDH+AESGCM:AES256+EECDH:AES256+EDH';
 ssl_prefer_server_ciphers on;
 ssl_session_cache shared:SSL:10m;
 EOF
+
     else
         DOMAIN_NAME="$(basename "$(readlink -f "$FOXHOLE_CERT_DIR")")"
 
@@ -107,16 +105,13 @@ EOF
     fi
 fi
 
-# No certificate available
-! [ -L "$FOXHOLE_CERT_DIR" ] && echo "listen $SERVER_PORT;" > "$FOXHOLE_LISTEN_CONF"
-
 
 # Authentication
 # ==============
 
 echo
 if confirm 'Configure authentication?'; then
-    [ -s "$FOXHOLE_HTPASSWD" ] && confirm 'Clear existing user list?' && rm "$FOXHOLE_HTPASSWD"
+    [ -s "$FOXHOLE_HTPASSWD" ] && confirm 'Delete existing user list?' && rm "$FOXHOLE_HTPASSWD"
 
     touch "$FOXHOLE_HTPASSWD"
 
@@ -143,7 +138,7 @@ fi
 
 echo
 if confirm 'Configure IP whitelist?'; then
-    [ -s "$FOXHOLE_ALLOW_CONF" ] && confirm 'Clear existing whitelist?' && rm "$FOXHOLE_ALLOW_CONF"
+    [ -s "$FOXHOLE_ALLOW_CONF" ] && confirm 'Delete existing whitelist?' && rm "$FOXHOLE_ALLOW_CONF"
 
     while true; do
         echo
@@ -151,11 +146,11 @@ if confirm 'Configure IP whitelist?'; then
         ! [ "$IP" ] && break
         ! [[ $IP =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && echo -e "${COLOR_RED}Invalid IP address$COLOR_OFF" && continue
 
-        echo "allow $IP;" >> "$FOXHOLE_ALLOW_CONF"
+        echo "allow $IP;" >>"$FOXHOLE_ALLOW_CONF"
 
         # Deny all other IPs
-        grep -vF "deny all;" "$FOXHOLE_ALLOW_CONF" > "$FOXHOLE_ALLOW_CONF.tmp" && mv -f "$FOXHOLE_ALLOW_CONF.tmp" "$FOXHOLE_ALLOW_CONF"
-        echo 'deny all;' >> "$FOXHOLE_ALLOW_CONF"
+        grep -vF "deny all;" "$FOXHOLE_ALLOW_CONF" >"$FOXHOLE_ALLOW_CONF.tmp" && mv -f "$FOXHOLE_ALLOW_CONF.tmp" "$FOXHOLE_ALLOW_CONF"
+        echo 'deny all;' >>"$FOXHOLE_ALLOW_CONF"
     done
 fi
 
@@ -166,13 +161,22 @@ fi
 echo
 echo 'Applying configuration...'
 
-cat >"$FOXHOLE_CONF" <<EOF
+echo '
 server {
-  listen 8080;
-  return 400;
-}
+    listen 80 default_server;
+    server_name _;
+' >"$FOXHOLE_CONF"
 
+# HTTP to HTTPS redirect
+[ -f "$FOXHOLE_SSL_CONF" ] && echo '
+    return 301 https://$host$request_uri;
+}
 server {
+    listen 443 ssl;
+    server_name _;
+' >>"$FOXHOLE_CONF"
+
+cat >>"$FOXHOLE_CONF" <<EOF
     include ${FOXHOLE_CONF_DIR}/foxhole_*.conf;
 
     resolver ${SERVER_DNS_RESOLVER} ipv6=off;
@@ -196,5 +200,8 @@ else
     SERVER_PUBLIC_ADDRESS=$SERVER_IP
 fi
 
+SERVER_PORT=80
+[ -f "$FOXHOLE_SSL_CONF" ] && SERVER_PORT=443
+
 echo
-echo -e "${COLOR_GREEN}Server started at ${SERVER_PUBLIC_ADDRESS}:65050$COLOR_OFF"
+echo -e "${COLOR_GREEN}Server started at ${SERVER_PUBLIC_ADDRESS}:${SERVER_PORT}$COLOR_OFF"
