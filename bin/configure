@@ -1,128 +1,200 @@
 #!/bin/sh
 
-mkdir -p /foxhole/letsencrypt
+set -e
+
+LETSENCRYPT_DIR=/etc/letsencrypt
+LIVE_CERTS_DIR="$LETSENCRYPT_DIR/live"
+
+FOXHOLE_CONF_DIR=/foxhole
+#FOXHOLE_CONF_DIR=./__TEMP
+FOXHOLE_CERT_DIR="$LIVE_CERTS_DIR/foxhole"
+FOXHOLE_HTPASSWD="$FOXHOLE_CONF_DIR/foxhole_htpasswd"
+FOXHOLE_LISTEN_CONF="$FOXHOLE_CONF_DIR/foxhole_listen.conf"
+FOXHOLE_BASIC_AUTH_CONF="$FOXHOLE_CONF_DIR/foxhole_basic_auth.conf"
+FOXHOLE_ALLOW_CONF="$FOXHOLE_CONF_DIR/foxhole_allow.conf"
+FOXHOLE_CONF="$FOXHOLE_CONF_DIR/foxhole.conf"
+
+SERVER_PORT=65050
+SERVER_DNS_RESOLVER=8.8.8.8
+SERVER_IP=$(wget -qO- http://myip.enix.org/REMOTE_ADDR)
+
+mkdir -p "$FOXHOLE_CONF_DIR"
+
+function confirm {
+    while true; do
+        read -p "$1 [y/n]: " CONFIRM
+        case "$CONFIRM" in
+            y) return 0;;
+            n) return 1;;
+        esac
+    done
+}
+
+COLOR_RED='\033[0;31m'
+COLOR_GREEN='\033[0;32m'
+COLOR_YELLOW='\033[0;33m'
+COLOR_OFF='\033[0m'
 
 echo
-if [[ "$(read -p '1/3 Enable HTTPS (requires a registered domain name)? [y/n] ' YES && echo $YES)" == [yY] ]]; then
-    read -p '    Domain name: ' DOMAIN_NAME
+echo -e "$COLOR_YELLOW"
+echo ' ▄████  ████▄     ▄   ▄  █ ████▄ █     ▄███▄  '
+echo ' █▀   ▀ █   █ ▀▄   █ █   █ █   █ █     █▀   ▀ '
+echo ' █▀▀    █   █   █ ▀  ██▀▀█ █   █ █     ██▄▄   '
+echo ' █      ▀████  ▄ █   █   █ ▀████ ███▄  █▄   ▄▀'
+echo '  █           █   ▀▄    █            ▀ ▀███▀  '
+echo '   ▀           ▀       ▀                      '
+echo -e "$COLOR_OFF"
+
+
+# HTTPS certificates
+# ==================
+
+echo
+if confirm 'Configure HTTPS?'; then
+    echo
+    echo -e "${COLOR_YELLOW}A registered domain name that has an 'A = $SERVER_IP' record in DNS is required.$COLOR_OFF"
+    echo
+    read -p "Enter a domain name: " DOMAIN_NAME
 
     if [ "$DOMAIN_NAME" ]; then
 
-        CERT_DIR="/etc/letsencrypt/live/$DOMAIN_NAME"
+        CERT_DIR="$LIVE_CERTS_DIR/$DOMAIN_NAME"
 
-        if [ -d "$CERT_DIR" ] && [[ "$(read -p '    Certificates already exist. Overwrite? [y/n] ' YES && echo $YES)" == [yY] ]]; then
-            echo 'DELETE CERTS'
-#            rm -rf "$CERT_DIR"
-        fi
+        [ -d "$CERT_DIR" ] && \
+        confirm "Delete existing certificates for ${DOMAIN_NAME}?" && \
+        echo 'DELETING CERTS'
+        #rm -rf "$CERT_DIR" "$FOXHOLE_CERT_DIR"
 
-        if ! [ -d "$CERT_DIR" ]; then
-            echo
-            echo 'Obtaining a certificate...'
+        echo
+        ! [ -d "$CERT_DIR" ] && \
+        echo "server { listen 8080; }" > "$FOXHOLE_CONF" && \
+        nginx -s reload && \
+        certbot certonly \
+            --nginx \
+            --nginx-server-root /usr/local/openresty/nginx/conf \
+            --dry-run \
+            --non-interactive \
+            --agree-tos \
+            --no-eff-email \
+            --no-redirect \
+            --email "admin@$DOMAIN_NAME" \
+            --cert-name "$DOMAIN_NAME" \
+            --domain "$DOMAIN_NAME"
+#            --quiet
 
-#            echo
-#            echo "server { listen 80; }" > /etc/nginx/conf.d/default.conf
-#
-#            echo
-#            certbot certonly \
-#                --nginx \
-#                --non-interactive \
-#                --agree-tos \
-#                --no-eff-email \
-#                --no-redirect \
-#                --email "admin@$DOMAIN_NAME" \
-#                --cert-name "$DOMAIN_NAME" \
-#                --domain "$DOMAIN_NAME"
-        fi
+        # Link certificate
+        ln -snf "$CERT_DIR" "$FOXHOLE_CERT_DIR"
 
-        ln -snf "$CERT_DIR" /etc/letsencrypt/live/foxhole
+        cat >"$FOXHOLE_LISTEN_CONF" <<EOF
+listen ${SERVER_PORT} ssl;
 
-        cp -f /etc/nginx/foxhole.conf /etc/nginx/conf.d/default.conf
-
-        [ -f /var/run/nginx.pid ] && nginx -s reload
+ssl_certificate ${FOXHOLE_CERT_DIR}/fullchain.pem;
+ssl_certificate_key ${FOXHOLE_CERT_DIR}/privkey.pem;
+ssl_session_timeout 5m;
+ssl_protocols TLSv1 TLSv1.1 TLSv1.2;
+ssl_dhparam ${LETSENCRYPT_DIR}/ssl-dhparams.pem;
+ssl_ciphers 'EECDH+AESGCM:EDH+AESGCM:AES256+EECDH:AES256+EDH';
+ssl_prefer_server_ciphers on;
+ssl_session_cache shared:SSL:10m;
+EOF
     else
-        echo
-        echo 'HTTPS configuration aborted'
+        DOMAIN_NAME="$(basename "$(readlink -f "$FOXHOLE_CERT_DIR")")"
+
+        [ "$DOMAIN_NAME" ] && \
+        confirm "Discard existing $DOMAIN_NAME HTTPS configuration (SSL certificates are preserved)?" && \
+        rm "$FOXHOLE_CERT_DIR" && \
+        DOMAIN_NAME=''
     fi
-else
-    rm -f /etc/letsencrypt/live/foxhole
 fi
 
-PROXY_PID_FILE=/tmp/tinyproxy.pid
-PROXY_BASIC_AUTH=''
-PROXY_ALLOW=''
+# No certificate available
+! [ -L "$FOXHOLE_CERT_DIR" ] && echo "listen $SERVER_PORT;" > "$FOXHOLE_LISTEN_CONF"
 
-if [ -L /etc/letsencrypt/live/foxhole ]; then
-    DOMAIN_NAME="$(basename "$(readlink -f /etc/letsencrypt/live/foxhole)")"
-    PROXY_LISTEN=127.0.0.1
-    PROXY_PORT=8080
-    PUBLIC_PORT=443
-else
-    PROXY_LISTEN=0.0.0.0
-    PROXY_PORT=80
-    PUBLIC_PORT=80
-fi
+
+# Authentication
+# ==============
 
 echo
-if [[ "$(read -p '2/3 Configure users? [y/n] ' YES && echo $YES)" == [yY] ]]; then
+if confirm 'Configure authentication?'; then
+    [ -s "$FOXHOLE_HTPASSWD" ] && confirm 'Clear existing user list?' && rm "$FOXHOLE_HTPASSWD"
+
+    touch "$FOXHOLE_HTPASSWD"
+
     while true; do
-        read -p '    Username: ' USERNAME
-
-        [ "$USERNAME" ] && read -p '    Password: ' PASSWORD
-
-        [ -z "$PASSWORD" ] && break
-
-        PROXY_BASIC_AUTH=$(echo -e "${PROXY_BASIC_AUTH}\nBasicAuth ${USERNAME} ${PASSWORD}")
-
         echo
-        ! [[ "$(read -p '    Add another user? [y/n] ' YES && echo $YES)" == [yY] ]] && break
+        read -p 'Enter username: ' USERNAME
+        [ "$USERNAME" ] && read -p 'Enter password: ' PASSWORD && htpasswd -b "$FOXHOLE_HTPASSWD" "$USERNAME" "$PASSWORD" || break
+    done
+
+    cat >"$FOXHOLE_BASIC_AUTH_CONF" <<EOF
+auth_basic "Authentication required";
+auth_basic_user_file "${FOXHOLE_HTPASSWD}";
+
+rewrite_by_lua_file "${FOXHOLE_CONF_DIR}/proxy_auth.lua";
+EOF
+fi
+
+# Discard basic auth if there are no users
+! [ -s "$FOXHOLE_HTPASSWD" ] && rm -f "$FOXHOLE_HTPASSWD" "$FOXHOLE_BASIC_AUTH_CONF"
+
+
+# IP whitelist
+# ============
+
+echo
+if confirm 'Configure IP whitelist?'; then
+    [ -s "$FOXHOLE_ALLOW_CONF" ] && confirm 'Clear existing whitelist?' && rm "$FOXHOLE_ALLOW_CONF"
+
+    while true; do
+        echo
+        read -p 'Enter IP address: ' IP
+        ! [ "$IP" ] && break
+        ! [[ $IP =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && echo -e "${COLOR_RED}Invalid IP address$COLOR_OFF" && continue
+
+        echo "allow $IP;" >> "$FOXHOLE_ALLOW_CONF"
+
+        # Deny all other IPs
+        grep -vF "deny all;" "$FOXHOLE_ALLOW_CONF" > "$FOXHOLE_ALLOW_CONF.tmp" && mv -f "$FOXHOLE_ALLOW_CONF.tmp" "$FOXHOLE_ALLOW_CONF"
+        echo 'deny all;' >> "$FOXHOLE_ALLOW_CONF"
     done
 fi
 
+
+# Apply nginx config
+# ==================
+
 echo
-if [[ "$(read -p '3/3 Enable IP whitelist? [y/n] ' YES && echo $YES)" == [yY] ]]; then
-    while true; do
-        read -p '    Enter an IP address: ' IP
+echo 'Applying configuration...'
 
-        [ -z "$IP" ] && break
+cat >"$FOXHOLE_CONF" <<EOF
+server {
+  listen 8080;
+  return 400;
+}
 
-        PROXY_ALLOW=$(echo -e "${PROXY_ALLOW}\nAllow ${IP}")
+server {
+    include ${FOXHOLE_CONF_DIR}/foxhole_*.conf;
 
-        echo
-        ! [[ "$(read -p '    Add another IP? [y/n] ' YES && echo $YES)" == [yY] ]] && break
-    done
-fi
+    resolver ${SERVER_DNS_RESOLVER} ipv6=off;
 
-mkdir -p /etc/tinyproxy
+    proxy_connect;
+    proxy_connect_allow 443 563;
+    proxy_connect_connect_timeout 10s;
+    proxy_connect_data_timeout 10s;
 
-cat >/etc/tinyproxy/tinyproxy.conf <<EOF
-User nobody
-Group nogroup
-PidFile "${PROXY_PID_FILE}"
-Listen ${PROXY_LISTEN}
-Port ${PROXY_PORT}
-Timeout 600
-MaxClients 256
-DisableViaHeader Yes
-LogLevel Info
-${PROXY_BASIC_AUTH}
-${PROXY_ALLOW}
+    location / {
+      proxy_pass \$scheme://\$host;
+    }
+}
 EOF
 
-echo
-echo 'Starting server...'
-
-echo
-cat /etc/tinyproxy/tinyproxy.conf
-
-while [ ! -f "$PROXY_PID_FILE" ]; do
-    sleep 2
-done
+nginx -s reload
 
 if [ "$DOMAIN_NAME" ]; then
-    PUBLIC_ADDR="$DOMAIN_NAME"
+    SERVER_PUBLIC_ADDRESS=$DOMAIN_NAME
 else
-    PUBLIC_ADDR=$(wget -qO- http://myip.enix.org/REMOTE_ADDR)
+    SERVER_PUBLIC_ADDRESS=$SERVER_IP
 fi
 
 echo
-echo -e "Server started successfully: \033[0;32m${PUBLIC_ADDR}:${PUBLIC_PORT}\033[0m"
+echo -e "${COLOR_GREEN}Server started at ${SERVER_PUBLIC_ADDRESS}:65050$COLOR_OFF"

@@ -9,7 +9,7 @@ How to set up forward proxy server on Digital Ocean:
 3. Copy this command and run it. It may take several of minutes to complete.
 
 ```shell
-docker rm -f foxhole && docker exec -it $(docker run --pull always --name=foxhole -v "$(pwd)/foxhole:/foxhole" -qdp 80:80 -p 443:443 ghcr.io/smikhalevski/foxhole:master) configure
+docker rm -f foxhole >/dev/null 2>&1 && docker exec -it $(docker run --pull always --name=foxhole -v "/foxhole:/foxhole" -v "/etc/letsencrypt:/etc/letsencrypt" -qdp 80:8080 -p 65050:65050 ghcr.io/smikhalevski/foxhole:master) configure
 ```
 
 4. Follow instructions on the screen. Setup username and
