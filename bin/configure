@@ -100,8 +100,7 @@ EOF
 
         [ "$DOMAIN_NAME" ] && \
         confirm "Discard existing $DOMAIN_NAME HTTPS configuration (SSL certificates are preserved)?" && \
-        rm "$FOXHOLE_CERT_DIR" && \
-        DOMAIN_NAME=''
+        rm -f "$FOXHOLE_SSL_CONF" "$FOXHOLE_CERT_DIR"
     fi
 fi
 
@@ -194,14 +193,11 @@ EOF
 
 nginx -s reload
 
-if [ "$DOMAIN_NAME" ]; then
-    SERVER_PUBLIC_ADDRESS=$DOMAIN_NAME
+if [ -f "$FOXHOLE_SSL_CONF" ]; then
+    SERVER_HOST="$(basename "$(readlink -f "$FOXHOLE_CERT_DIR")"):443"
 else
-    SERVER_PUBLIC_ADDRESS=$SERVER_IP
+    SERVER_HOST="$SERVER_IP:80"
 fi
 
-SERVER_PORT=80
-[ -f "$FOXHOLE_SSL_CONF" ] && SERVER_PORT=443
-
 echo
-echo -e "${COLOR_GREEN}Server started at ${SERVER_PUBLIC_ADDRESS}:${SERVER_PORT}$COLOR_OFF"
+echo -e "${COLOR_GREEN}Server started at $SERVER_HOST$COLOR_OFF"
