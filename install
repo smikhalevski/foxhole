@@ -1,5 +1,22 @@
 #!/bin/sh
 
+if [ -z "$PROXY_HTTP_PORT" ] || [ -z "$PROXY_HTTPS_PORT" ]; then
+    echo 'Error: PROXY_HTTP_PORT and PROXY_HTTPS_PORT must contain port numbers.'
+    exit 1
+fi
+
 docker rm -f foxhole >/dev/null 2>&1
 
-docker exec -it $(docker run --pull always --name=foxhole -v "/foxhole:/foxhole" -v "/etc/letsencrypt:/etc/letsencrypt" -qdp 80:80 -p 443:443 ghcr.io/smikhalevski/foxhole:master) configure
+docker exec -it $(docker run \
+    --pull always \
+    --name=foxhole \
+    -v "/foxhole:/foxhole" \
+    -v "/etc/letsencrypt:/etc/letsencrypt" \
+    -qd \
+    -p '80:80' \
+    -p '443:443' \
+    -p "$PROXY_HTTP_PORT:$PROXY_HTTP_PORT" \
+    -p "$PROXY_HTTPS_PORT:$PROXY_HTTPS_PORT" \
+    --env "PROXY_HTTP_PORT=$PROXY_HTTP_PORT" \
+    --env "PROXY_HTTPS_PORT=$PROXY_HTTPS_PORT" \
+    ghcr.io/smikhalevski/foxhole:master) configure

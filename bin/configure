@@ -4,21 +4,30 @@ set -e
 
 clear
 
+# PROXY_HTTP_PORT and PROXY_HTTPS_PORT are defined externally
+
 LETSENCRYPT_DIR=/etc/letsencrypt
 LIVE_CERTS_DIR="$LETSENCRYPT_DIR/live"
-
-FOXHOLE_CONF_DIR=/foxhole
 FOXHOLE_CERT_DIR="$LIVE_CERTS_DIR/foxhole"
-FOXHOLE_HTPASSWD="$FOXHOLE_CONF_DIR/foxhole_htpasswd"
-FOXHOLE_SSL_CONF="$FOXHOLE_CONF_DIR/foxhole_ssl.conf"
-FOXHOLE_BASIC_AUTH_CONF="$FOXHOLE_CONF_DIR/foxhole_basic_auth.conf"
-FOXHOLE_ALLOW_CONF="$FOXHOLE_CONF_DIR/foxhole_allow.conf"
-FOXHOLE_CONF="$FOXHOLE_CONF_DIR/foxhole.conf"
 
-SERVER_DNS_RESOLVER=8.8.8.8
+FOXHOLE_DIR=/foxhole
+FOXHOLE_CONF="$FOXHOLE_DIR/foxhole.conf"
+FOXHOLE_BASIC_AUTH_CONF="$FOXHOLE_DIR/foxhole_basic_auth.conf"
+FOXHOLE_ALLOW_CONF="$FOXHOLE_DIR/foxhole_allow.conf"
+FOXHOLE_PROXY_CONF="$FOXHOLE_DIR/foxhole_proxy.conf"
+
+HTPASSWD="$FOXHOLE_DIR/.htpasswd"
+SSL_CONF="$FOXHOLE_DIR/ssl.conf"
+
+FOXHOLE_PUBLIC_DIR="$FOXHOLE_DIR/public"
+HTTP_PAC="http.pac"
+HTTPS_PAC="https.pac"
+
+PROXY_DNS_RESOLVER=8.8.8.8
+
 SERVER_IP=$(wget -qO- http://myip.enix.org/REMOTE_ADDR)
 
-mkdir -p "$FOXHOLE_CONF_DIR"
+mkdir -p "$FOXHOLE_DIR" "$FOXHOLE_PUBLIC_DIR"
 
 function confirm {
     while true; do
@@ -58,13 +67,13 @@ if confirm 'Configure HTTPS?'; then
 
     if [ "$DOMAIN_NAME" ]; then
 
-        CERT_DIR="$LIVE_CERTS_DIR/$DOMAIN_NAME"
+        DOMAIN_CERT_DIR="$LIVE_CERTS_DIR/$DOMAIN_NAME"
 
-        [ -d "$CERT_DIR" ] && confirm "Delete existing certificates for ${DOMAIN_NAME}?" && rm -rf "$CERT_DIR"
+        [ -d "$DOMAIN_CERT_DIR" ] && confirm "Delete existing certificates for ${DOMAIN_NAME}?" && rm -rf "$DOMAIN_CERT_DIR"
 
-        rm -f "$FOXHOLE_SSL_CONF" "$FOXHOLE_CERT_DIR"
+        rm -f "$SSL_CONF" "$FOXHOLE_CERT_DIR"
 
-        ! [ -d "$CERT_DIR" ] && \
+        ! [ -d "$DOMAIN_CERT_DIR" ] && \
         echo && \
         echo -n 'Issuing a certificate... ' && \
         echo '' >"$FOXHOLE_CONF" && \
@@ -82,9 +91,9 @@ if confirm 'Configure HTTPS?'; then
             --quiet && \
         echo -e "${COLOR_GREEN}OK$COLOR_OFF"
 
-        [ -d "$CERT_DIR" ] && \
-        ln -snf "$CERT_DIR" "$FOXHOLE_CERT_DIR" && \
-        cat >"$FOXHOLE_SSL_CONF" <<EOF
+        [ -d "$DOMAIN_CERT_DIR" ] && \
+        ln -snf "$DOMAIN_CERT_DIR" "$FOXHOLE_CERT_DIR" && \
+        cat >"$SSL_CONF" <<EOF
 ssl_certificate ${FOXHOLE_CERT_DIR}/fullchain.pem;
 ssl_certificate_key ${FOXHOLE_CERT_DIR}/privkey.pem;
 ssl_session_timeout 5m;
@@ -100,7 +109,7 @@ EOF
 
         [ "$DOMAIN_NAME" ] && \
         confirm "Discard existing $DOMAIN_NAME HTTPS configuration (SSL certificates are preserved)?" && \
-        rm -f "$FOXHOLE_SSL_CONF" "$FOXHOLE_CERT_DIR"
+        rm -f "$SSL_CONF" "$FOXHOLE_CERT_DIR"
     fi
 fi
 
@@ -110,26 +119,26 @@ fi
 
 echo
 if confirm 'Configure authentication?'; then
-    [ -s "$FOXHOLE_HTPASSWD" ] && confirm 'Delete existing user list?' && rm "$FOXHOLE_HTPASSWD"
+    [ -s "$HTPASSWD" ] && confirm 'Delete existing user list?' && rm "$HTPASSWD"
 
-    touch "$FOXHOLE_HTPASSWD"
+    touch "$HTPASSWD"
 
     while true; do
         echo
         read -p 'Enter username: ' USERNAME
-        [ "$USERNAME" ] && read -p 'Enter password: ' PASSWORD && htpasswd -b "$FOXHOLE_HTPASSWD" "$USERNAME" "$PASSWORD" || break
+        [ "$USERNAME" ] && read -p 'Enter password: ' PASSWORD && htpasswd -b "$HTPASSWD" "$USERNAME" "$PASSWORD" || break
     done
 
     cat >"$FOXHOLE_BASIC_AUTH_CONF" <<EOF
 auth_basic "Authentication required";
-auth_basic_user_file "${FOXHOLE_HTPASSWD}";
+auth_basic_user_file "${HTPASSWD}";
 
 rewrite_by_lua_file /usr/local/openresty/nginx/conf/proxy_auth.lua;
 EOF
 fi
 
 # Discard basic auth if there are no users
-! [ -s "$FOXHOLE_HTPASSWD" ] && rm -f "$FOXHOLE_HTPASSWD" "$FOXHOLE_BASIC_AUTH_CONF"
+! [ -s "$HTPASSWD" ] && rm -f "$HTPASSWD" "$FOXHOLE_BASIC_AUTH_CONF"
 
 
 # IP whitelist
@@ -154,50 +163,126 @@ if confirm 'Configure IP whitelist?'; then
 fi
 
 
+# Composing configs
+# =================
+
+cat >"$FOXHOLE_PROXY_CONF" <<EOF
+resolver ${PROXY_DNS_RESOLVER} ipv6=off;
+
+proxy_connect;
+proxy_connect_allow 443 563;
+proxy_connect_connect_timeout 10s;
+proxy_connect_data_timeout 10s;
+
+location / {
+  proxy_pass \$scheme://\$host;
+}
+EOF
+
+if [ -f "$SSL_CONF" ]; then
+    SERVER_HOST="$(basename "$(readlink -f "$FOXHOLE_CERT_DIR")")"
+else
+    SERVER_HOST="$SERVER_IP"
+fi
+
+echo "function FindProxyForURL(){return 'HTTP $SERVER_HOST:$PROXY_HTTP_PORT';}" >"$FOXHOLE_PUBLIC_DIR/$HTTP_PAC"
+
+if [ -f "$SSL_CONF" ]; then
+    echo "function FindProxyForURL(){return 'HTTPS $SERVER_HOST:$PROXY_HTTPS_PORT';}" >"$FOXHOLE_PUBLIC_DIR/$HTTPS_PAC"
+
+    # HTTP + HTTPS
+    cat >"$FOXHOLE_CONF" <<EOF
+server {
+    listen 80 default_server;
+    server_name _;
+
+    location = /foxhole.pac {
+        root ${FOXHOLE_PUBLIC_DIR};
+        try_files "/$HTTP_PAC" =404;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name _;
+    include ${SSL_CONF};
+
+    location = /foxhole.pac {
+        root ${FOXHOLE_PUBLIC_DIR};
+        try_files "/$HTTPS_PAC" =404;
+    }
+}
+
+server {
+    listen ${PROXY_HTTP_PORT};
+    server_name _;
+    include ${FOXHOLE_DIR}/foxhole_*.conf;
+}
+
+server {
+    listen ${PROXY_HTTPS_PORT} ssl;
+    server_name _;
+    include ${SSL_CONF};
+    include ${FOXHOLE_DIR}/foxhole_*.conf;
+}
+EOF
+
+else
+    rm -f "$FOXHOLE_PUBLIC_DIR/$HTTPS_PAC"
+
+    # HTTP only
+    cat >"$FOXHOLE_CONF" <<EOF
+server {
+    listen 80 default_server;
+    server_name _;
+
+    location = /foxhole.pac {
+        root ${FOXHOLE_PUBLIC_DIR};
+        try_files "/$HTTP_PAC" =404;
+    }
+}
+
+server {
+    listen 443;
+    server_name _;
+    return 404;
+}
+
+server {
+    listen ${PROXY_HTTP_PORT};
+    server_name _;
+    include ${FOXHOLE_DIR}/foxhole_*.conf;
+}
+
+server {
+    listen ${PROXY_HTTPS_PORT};
+    server_name _;
+    return 404;
+}
+EOF
+
+fi
+
+
 # Apply nginx config
 # ==================
 
 echo
 echo 'Applying configuration...'
 
-echo '
-server {
-    listen 80 default_server;
-    server_name _;
-' >"$FOXHOLE_CONF"
-
-# HTTP to HTTPS redirect
-[ -f "$FOXHOLE_SSL_CONF" ] && echo '
-    return 301 https://$host$request_uri;
-}
-server {
-    listen 443 ssl;
-    server_name _;
-' >>"$FOXHOLE_CONF"
-
-cat >>"$FOXHOLE_CONF" <<EOF
-    include ${FOXHOLE_CONF_DIR}/foxhole_*.conf;
-
-    resolver ${SERVER_DNS_RESOLVER} ipv6=off;
-
-    proxy_connect;
-    proxy_connect_allow 443 563;
-    proxy_connect_connect_timeout 10s;
-    proxy_connect_data_timeout 10s;
-
-    location / {
-      proxy_pass \$scheme://\$host;
-    }
-}
-EOF
-
+echo
 nginx -s reload
 
-if [ -f "$FOXHOLE_SSL_CONF" ]; then
-    SERVER_HOST="$(basename "$(readlink -f "$FOXHOLE_CERT_DIR")"):443"
-else
-    SERVER_HOST="$SERVER_IP:80"
-fi
+echo -e "${COLOR_GREEN}Proxy successfully started$COLOR_OFF"
 
 echo
-echo -e "${COLOR_GREEN}Server started at $SERVER_HOST$COLOR_OFF"
+echo "HTTP proxy:"
+echo "  $SERVER_HOST:$PROXY_HTTP_PORT"
+echo "  Configuration URL: http://$SERVER_HOST/foxhole.pac"
+
+if [ -f "$SSL_CONF" ]; then
+    echo
+    echo "HTTPS proxy:"
+    echo "  $SERVER_HOST:$PROXY_HTTPS_PORT"
+    echo "  Configuration URL: https://$SERVER_HOST/foxhole.pac"
+fi
