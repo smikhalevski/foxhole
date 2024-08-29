@@ -196,6 +196,10 @@ server {
     listen 80 default_server;
     server_name _;
 
+    location / {
+      return 400 'Bad Request';
+    }
+
     location = /foxhole.pac {
         root ${FOXHOLE_PUBLIC_DIR};
         try_files "/$HTTP_PAC" =404;
@@ -206,6 +210,10 @@ server {
     listen 443 ssl;
     server_name _;
     include ${SSL_CONF};
+
+    location / {
+      return 400 'Bad Request';
+    }
 
     location = /foxhole.pac {
         root ${FOXHOLE_PUBLIC_DIR};
@@ -236,6 +244,10 @@ server {
     listen 80 default_server;
     server_name _;
 
+    location / {
+      return 400 'Bad Request';
+    }
+
     location = /foxhole.pac {
         root ${FOXHOLE_PUBLIC_DIR};
         try_files "/$HTTP_PAC" =404;
@@ -245,7 +257,7 @@ server {
 server {
     listen 443;
     server_name _;
-    return 404;
+    return 400 'Bad Request';
 }
 
 server {
@@ -257,7 +269,7 @@ server {
 server {
     listen ${PROXY_HTTPS_PORT};
     server_name _;
-    return 404;
+    return 400 'Bad Request';
 }
 EOF
 

@@ -38,4 +38,6 @@ COPY --from=builder /usr/sbin/nginx /usr/sbin/nginx
 COPY ./bin /usr/local/sbin
 COPY ./conf /usr/local/openresty/nginx/conf
 
+RUN rm -rf /usr/local/openresty/nginx/html
+
 CMD run
