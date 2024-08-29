@@ -1,5 +1,9 @@
 <p align="center">
-  <a href="#readme"><img src="./assets/logo.png" alt="Foxhole" width="500"></a>
+  <a href="#readme"><picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/logo-dark.png" />
+    <source media="(prefers-color-scheme: light)" srcset="./assets/logo-light.png" />
+    <img alt="Foxhole" src="./assets/logo-light.png" width="600" />
+  </picture></a>
 </p>
 
 Foxhole is a Docker container that streamlines the setup of HTTPS forward proxy.
